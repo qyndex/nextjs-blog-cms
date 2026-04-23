@@ -1,23 +1,21 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // Each test gets a fresh module so the internal `_loaded` state is reset
 describe('t()', () => {
-  beforeEach(async () => {
-    // Module-level state: reset by re-importing
-    const mod = await import('./i18n')
-    // Reset loaded state by loading empty translations
-    await mod.loadLocale('en')
-  })
-
-  it('returns the key itself when no translation is loaded', async () => {
-    // Fresh import — _loaded is empty at module level initially
-    const { t } = await import('./i18n')
-    expect(t('common.loading')).toBe('common.loading')
+  beforeEach(() => {
+    vi.resetModules()
   })
 
   it('returns the fallback string when key is missing', async () => {
-    const { t } = await import('./i18n')
+    const { t, loadLocale } = await import('./i18n')
+    await loadLocale('en')
     expect(t('nonexistent.key', 'Default text')).toBe('Default text')
+  })
+
+  it('returns the key itself when fallback is not provided and key is missing', async () => {
+    const { t, loadLocale } = await import('./i18n')
+    await loadLocale('en')
+    expect(t('nonexistent.key')).toBe('nonexistent.key')
   })
 })
 

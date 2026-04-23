@@ -1,150 +1,113 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import type { MockInstance } from 'vitest'
-import fs from 'fs'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// We mock the `fs` module so tests have no disk dependency
-vi.mock('fs')
+// Mock the supabase module before importing posts
+const mockSelect = vi.fn()
+const mockEq = vi.fn()
+const mockOrder = vi.fn()
+const mockSingle = vi.fn()
+const mockIn = vi.fn()
+const mockFrom = vi.fn()
 
-const mockedFs = vi.mocked(fs)
+vi.mock('./supabase', () => ({
+  createServerClient: () => ({
+    from: mockFrom,
+  }),
+}))
 
-// gray-matter is a pure function over a string — we let it run for real
-// so the parsing logic in posts.ts is fully exercised.
+// Chain builder helper
+function chainBuilder(finalData: unknown, finalError: unknown = null) {
+  const chain: Record<string, unknown> = {}
+  chain.select = vi.fn().mockReturnValue(chain)
+  chain.eq = vi.fn().mockReturnValue(chain)
+  chain.in = vi.fn().mockReturnValue(chain)
+  chain.order = vi.fn().mockResolvedValue({ data: finalData, error: finalError })
+  chain.single = vi.fn().mockResolvedValue({ data: finalData, error: finalError })
+  return chain
+}
 
 describe('getAllPosts', () => {
   beforeEach(() => {
     vi.resetModules()
+    vi.clearAllMocks()
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('returns an empty array when the content directory does not exist', async () => {
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(false)
+  it('returns an empty array when query returns error', async () => {
+    const postsChain = chainBuilder(null, { message: 'error' })
+    mockFrom.mockReturnValue(postsChain)
 
     const { getAllPosts } = await import('./posts')
     const posts = await getAllPosts()
     expect(posts).toEqual([])
   })
 
-  it('parses a single markdown file and returns a Post', async () => {
-    const mdContent = `---
-title: Hello World
-date: 2024-01-15
-category: Engineering
-excerpt: A first post
-tags: [typescript, nextjs]
----
-Post body here.`
+  it('returns posts with tags when data exists', async () => {
+    const mockPosts = [
+      { id: '1', title: 'Test Post', slug: 'test-post', status: 'published' },
+    ]
+    const mockPostTags = [
+      { post_id: '1', tag: { id: 't1', name: 'TypeScript', slug: 'typescript' } },
+    ]
 
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(true)
-    ;(mockedFs.readdirSync as unknown as MockInstance).mockReturnValue(['hello-world.md'] as unknown as fs.Dirent[])
-    ;(mockedFs.readFileSync as unknown as MockInstance).mockReturnValue(mdContent)
-
-    const { getAllPosts } = await import('./posts')
-    const posts = await getAllPosts()
-
-    expect(posts).toHaveLength(1)
-    expect(posts[0]).toMatchObject({
-      slug: 'hello-world',
-      title: 'Hello World',
-      date: '2024-01-15',
-      category: 'Engineering',
-      excerpt: 'A first post',
-      tags: ['typescript', 'nextjs'],
+    let callCount = 0
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'posts') {
+        const chain = chainBuilder(mockPosts)
+        // Override order to return data directly
+        chain.order = vi.fn().mockResolvedValue({ data: mockPosts, error: null })
+        return chain
+      }
+      if (table === 'post_tags') {
+        const chain = chainBuilder(mockPostTags)
+        chain.in = vi.fn().mockResolvedValue({ data: mockPostTags, error: null })
+        return chain
+      }
+      return chainBuilder([])
     })
-  })
-
-  it('sorts posts by date descending (newest first)', async () => {
-    const makePost = (title: string, date: string) => `---
-title: ${title}
-date: ${date}
-category: General
-excerpt: excerpt
-tags: []
----
-body`
-
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(true)
-    ;(mockedFs.readdirSync as unknown as MockInstance).mockReturnValue(['older.md', 'newer.md'] as unknown as fs.Dirent[])
-    ;(mockedFs.readFileSync as unknown as MockInstance)
-      .mockReturnValueOnce(makePost('Older Post', '2024-01-01'))
-      .mockReturnValueOnce(makePost('Newer Post', '2024-06-01'))
-
-    const { getAllPosts } = await import('./posts')
-    const posts = await getAllPosts()
-
-    expect(posts[0].title).toBe('Newer Post')
-    expect(posts[1].title).toBe('Older Post')
-  })
-
-  it('applies sensible defaults when frontmatter fields are absent', async () => {
-    const mdContent = '---\n---\nJust a body.'
-
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(true)
-    ;(mockedFs.readdirSync as unknown as MockInstance).mockReturnValue(['no-meta.md'] as unknown as fs.Dirent[])
-    ;(mockedFs.readFileSync as unknown as MockInstance).mockReturnValue(mdContent)
-
-    const { getAllPosts } = await import('./posts')
-    const [post] = await getAllPosts()
-
-    expect(post.title).toBe('Untitled')
-    expect(post.category).toBe('Uncategorized')
-    expect(post.tags).toEqual([])
-    expect(post.excerpt).toBe('')
-  })
-
-  it('ignores non-markdown files in the directory', async () => {
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(true)
-    ;(mockedFs.readdirSync as unknown as MockInstance).mockReturnValue(['post.md', 'image.png', 'data.json'] as unknown as fs.Dirent[])
-    ;(mockedFs.readFileSync as unknown as MockInstance).mockReturnValue('---\ntitle: Only Post\ndate: 2024-01-01\ncategory: x\nexcerpt: y\ntags: []\n---\nbody')
 
     const { getAllPosts } = await import('./posts')
     const posts = await getAllPosts()
 
     expect(posts).toHaveLength(1)
-    expect(posts[0].slug).toBe('post')
+    expect(posts[0].title).toBe('Test Post')
+    expect(posts[0].tags).toHaveLength(1)
+    expect(posts[0].tags[0].name).toBe('TypeScript')
   })
 })
 
-describe('getPostBySlug', () => {
+describe('getAllCategories', () => {
   beforeEach(() => {
     vi.resetModules()
+    vi.clearAllMocks()
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
+  it('returns categories with post counts', async () => {
+    const mockCategories = [
+      { id: 'c1', name: 'Engineering', slug: 'engineering', description: null, created_at: '' },
+    ]
+    const mockPosts = [
+      { category_id: 'c1' },
+      { category_id: 'c1' },
+    ]
 
-  it('returns the matching post by slug', async () => {
-    const mdContent = `---
-title: Target Post
-date: 2024-03-01
-category: Tech
-excerpt: An excerpt
-tags: []
----
-body`
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'categories') {
+        const chain = chainBuilder(mockCategories)
+        chain.order = vi.fn().mockResolvedValue({ data: mockCategories, error: null })
+        return chain
+      }
+      if (table === 'posts') {
+        const chain = chainBuilder(mockPosts)
+        chain.eq = vi.fn().mockResolvedValue({ data: mockPosts, error: null })
+        return chain
+      }
+      return chainBuilder([])
+    })
 
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(true)
-    ;(mockedFs.readdirSync as unknown as MockInstance).mockReturnValue(['target-post.md'] as unknown as fs.Dirent[])
-    ;(mockedFs.readFileSync as unknown as MockInstance).mockReturnValue(mdContent)
+    const { getAllCategories } = await import('./posts')
+    const categories = await getAllCategories()
 
-    const { getPostBySlug } = await import('./posts')
-    const post = await getPostBySlug('target-post')
-
-    expect(post).not.toBeNull()
-    expect(post?.slug).toBe('target-post')
-    expect(post?.title).toBe('Target Post')
-  })
-
-  it('returns null when no post matches the slug', async () => {
-    ;(mockedFs.existsSync as unknown as MockInstance).mockReturnValue(true)
-    ;(mockedFs.readdirSync as unknown as MockInstance).mockReturnValue([] as unknown as fs.Dirent[])
-
-    const { getPostBySlug } = await import('./posts')
-    const post = await getPostBySlug('does-not-exist')
-
-    expect(post).toBeNull()
+    expect(categories).toHaveLength(1)
+    expect(categories[0].name).toBe('Engineering')
+    expect(categories[0].post_count).toBe(2)
   })
 })

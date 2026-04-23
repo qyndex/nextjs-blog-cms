@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { Header } from './Header'
 
-// next/link renders a plain <a> in test environments
+// Mock next/link with a plain <a>
 vi.mock('next/link', () => ({
   default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => (
     <a href={href} className={className}>
@@ -11,7 +11,17 @@ vi.mock('next/link', () => ({
   ),
 }))
 
+// Mock the auth provider
+const mockUseAuth = vi.fn()
+vi.mock('@/components/auth/AuthProvider', () => ({
+  useAuth: () => mockUseAuth(),
+}))
+
 describe('Header', () => {
+  beforeEach(() => {
+    mockUseAuth.mockReturnValue({ user: null, signOut: vi.fn() })
+  })
+
   it('renders the blog brand link pointing to /', () => {
     render(<Header />)
     const brandLink = screen.getByRole('link', { name: /blog/i })
@@ -37,12 +47,23 @@ describe('Header', () => {
     render(<Header />)
     const nav = screen.getByRole('navigation')
     expect(nav).toBeInTheDocument()
-    // Both Posts and Categories links are children of the nav
     expect(nav).toContainElement(screen.getByRole('link', { name: /categories/i }))
   })
 
   it('renders as a <header> landmark', () => {
     render(<Header />)
     expect(screen.getByRole('banner')).toBeInTheDocument()
+  })
+
+  it('shows Sign In link when user is not authenticated', () => {
+    render(<Header />)
+    expect(screen.getByRole('link', { name: /sign in/i })).toBeInTheDocument()
+  })
+
+  it('shows Dashboard link and Sign Out when user is authenticated', () => {
+    mockUseAuth.mockReturnValue({ user: { id: '123', email: 'test@test.com' }, signOut: vi.fn() })
+    render(<Header />)
+    expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 })
